@@ -22,25 +22,30 @@ fn categorize(path: &Path, is_dir: bool) -> FileCategory {
         .map(|n| n.to_string_lossy().to_lowercase())
         .unwrap_or_default();
 
+    // Temporary / Cache
     if path_str.contains("/appdata/local/temp")
         || path_str.contains("\\appdata\\local\\temp")
         || path_str.contains("/appdata/local/microsoft/windows/inetcache")
         || path_str.contains("/.cache")
-        || path_str.contains("/tmp")
+        || path_str.contains("/tmp/")
         || path_str.contains("/var/tmp")
         || path_str.contains("/var/cache")
         || name == "cache"
         || name == "temp"
         || name == "tmp"
         || name.ends_with(".tmp")
+        || name == "thumbs.db"
+        || name == ".ds_store"
     {
         return FileCategory::Temporary;
     }
 
+    // Downloads
     if path_str.contains("/downloads") || path_str.contains("\\downloads") {
         return FileCategory::Downloads;
     }
 
+    // Programs / Applications
     if path_str.contains("/program files")
         || path_str.contains("\\program files")
         || path_str.contains("/applications/")
@@ -49,19 +54,25 @@ fn categorize(path: &Path, is_dir: bool) -> FileCategory {
         || path_str.contains("\\appdata\\local\\programs")
         || path_str.contains("/.local/share/applications")
         || name.ends_with(".app")
+        || name.ends_with(".appimage")
     {
         return FileCategory::Programs;
     }
 
+    // System
     if path_str.contains("/windows/")
         || path_str.contains("\\windows\\")
         || path_str.contains("/system32")
         || path_str.contains("/sys/")
         || path_str.contains("/boot/")
+        || path_str.contains("/library/system")
+        || path_str.contains("/usr/lib")
+        || path_str.contains("/usr/bin")
     {
         return FileCategory::System;
     }
 
+    // Development
     if name == "node_modules"
         || name == ".git"
         || name == "target"
@@ -72,11 +83,40 @@ fn categorize(path: &Path, is_dir: bool) -> FileCategory {
         || name == "venv"
         || name == ".next"
         || name == "vendor"
+        || name == ".gradle"
+        || name == "bower_components"
         || path_str.contains("/.cargo")
         || path_str.contains("/.npm")
         || path_str.contains("/.rustup")
+        || path_str.contains("/.nuget")
+        || path_str.contains("/.pnpm-store")
     {
         return FileCategory::Development;
+    }
+
+    // Games (common locations)
+    if path_str.contains("/steam/steamapps")
+        || path_str.contains("\\steam\\steamapps")
+        || path_str.contains("/epic games")
+        || path_str.contains("\\epic games")
+        || path_str.contains("/gog galaxy")
+        || path_str.contains("\\gog galaxy")
+        || path_str.contains("/xboxgames")
+        || name == "steamapps"
+    {
+        return FileCategory::Games;
+    }
+
+    // Backups
+    if name.contains("backup")
+        || name.ends_with(".bak")
+        || name.ends_with(".old")
+        || path_str.contains("/backups")
+        || path_str.contains("\\backups")
+        || name.ends_with(".sparsebundle")
+        || name.ends_with(".tmbundle")
+    {
+        return FileCategory::Backups;
     }
 
     if is_dir {
@@ -87,17 +127,21 @@ fn categorize(path: &Path, is_dir: bool) -> FileCategory {
         let ext = ext.to_lowercase();
         match ext.as_str() {
             "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "svg" | "heic" | "raw" | "tiff"
-            | "ico" => FileCategory::Images,
-            "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpeg" => {
+            | "ico" | "avif" => FileCategory::Images,
+            "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpeg" | "ts" => {
                 FileCategory::Videos
             }
-            "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" | "aiff" => FileCategory::Audio,
+            "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" | "aiff" | "opus" => {
+                FileCategory::Audio
+            }
             "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "rtf" | "odt"
-            | "md" | "csv" => FileCategory::Documents,
-            "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "iso" | "dmg" => {
+            | "md" | "csv" | "epub" | "pages" | "numbers" | "key" => FileCategory::Documents,
+            "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "iso" | "dmg" | "tgz" => {
                 FileCategory::Archives
             }
-            "exe" | "msi" | "app" | "deb" | "rpm" | "appimage" | "pkg" => FileCategory::Programs,
+            "exe" | "msi" | "app" | "deb" | "rpm" | "appimage" | "pkg" | "dmg" => {
+                FileCategory::Programs
+            }
             _ => FileCategory::Other,
         }
     } else {
@@ -133,7 +177,9 @@ fn calculate_importance(size: u64, modified: Option<u64>, category: &FileCategor
         FileCategory::Downloads => 1.45,
         FileCategory::Archives => 1.35,
         FileCategory::Development => 1.3,
+        FileCategory::Backups => 1.25,
         FileCategory::Videos => 1.15,
+        FileCategory::Games => 1.1,
         FileCategory::Programs => 0.85,
         FileCategory::System => 0.25,
         FileCategory::Documents => 0.65,
@@ -165,10 +211,44 @@ fn quick_hash(path: &Path, size: u64) -> Option<String> {
     Some(hasher.finalize().to_hex().to_string())
 }
 
-// FULL SCANNER: For the complete scan_directory, detect_installed_programs,
-// and generate_recommendations implementations, the remaining ~12KB of logic
-// continues in the workspace file. This module provides the core categorization
-// and hashing. The complete scan_directory is required for a working app.
+fn is_program_dir(path: &Path, name: &str) -> bool {
+    let path_str = path.to_string_lossy().to_lowercase();
+    let name_lower = name.to_lowercase();
+
+    // macOS .app bundles
+    if name_lower.ends_with(".app") {
+        return true;
+    }
+
+    // Windows Program Files direct children
+    if (path_str.contains("\\program files") || path_str.contains("/program files"))
+        && path.parent().map(|p| {
+            let ps = p.to_string_lossy().to_lowercase();
+            ps.ends_with("program files") || ps.ends_with("program files (x86)")
+        }).unwrap_or(false)
+    {
+        return true;
+    }
+
+    // Common install locations
+    if path_str.contains("\\appdata\\local\\programs\\")
+        || path_str.contains("/appdata/local/programs/")
+        || path_str.contains("/applications/")
+    {
+        if let Some(parent) = path.parent() {
+            let ps = parent.to_string_lossy().to_lowercase();
+            if ps.ends_with("/applications")
+                || ps.ends_with("\\applications")
+                || ps.ends_with("/programs")
+                || ps.ends_with("\\programs")
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
 
 pub fn scan_directory(
     root_path: &str,
@@ -198,6 +278,7 @@ pub fn scan_directory(
 
     emit_progress("scanning", root_path, 0, 0);
 
+    // Collect all entries first
     let mut entries: Vec<(PathBuf, u64, bool, Option<u64>, Option<u64>)> = Vec::new();
     let mut file_candidates_for_hash: Vec<(PathBuf, u64)> = Vec::new();
 
@@ -226,7 +307,7 @@ pub fn scan_directory(
             }
         }
 
-        if count % 600 == 0 {
+        if count % 800 == 0 {
             emit_progress(
                 "scanning",
                 &path.to_string_lossy(),
@@ -246,58 +327,165 @@ pub fn scan_directory(
         bytes_scanned.load(Ordering::Relaxed),
     );
 
-    // Build simplified tree for root
+    // Build nodes map
+    let mut nodes: HashMap<String, FileNode> = HashMap::new();
+    let mut parent_map: HashMap<String, String> = HashMap::new();
+    let mut category_summary: HashMap<String, u64> = HashMap::new();
     let mut total_size = 0u64;
     let mut total_files = 0u64;
-    let mut category_summary: HashMap<String, u64> = HashMap::new();
-    let mut children = Vec::new();
 
+    let root_key = root.to_string_lossy().to_string();
+
+    // First pass: create all nodes
     for (path, size, is_dir, modified, accessed) in &entries {
-        if path.parent() == Some(root.as_path()) || path == &root {
-            if path == &root {
-                continue;
-            }
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let category = categorize(path, *is_dir);
-            let importance = calculate_importance(*size, *modified, &category);
-            if !is_dir {
-                total_size += size;
-                total_files += 1;
-                *category_summary
-                    .entry(format!("{:?}", category))
-                    .or_insert(0) += size;
-            }
-            children.push(FileNode {
-                name,
-                path: path.to_string_lossy().to_string(),
-                size: *size,
-                is_dir: *is_dir,
-                category,
-                modified: *modified,
-                accessed: *accessed,
-                children: vec![],
-                file_count: if *is_dir { 0 } else { 1 },
-                importance_score: importance,
-                is_program: false,
-                program_name: None,
-            });
-        } else if !is_dir {
+        let path_str = path.to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path_str.clone());
+
+        let category = categorize(path, *is_dir);
+        let importance = calculate_importance(*size, *modified, &category);
+        let is_prog = is_program_dir(path, &name);
+
+        if !is_dir {
             total_size += size;
             total_files += 1;
-            let category = categorize(path, false);
             *category_summary
                 .entry(format!("{:?}", category))
                 .or_insert(0) += size;
         }
+
+        let node = FileNode {
+            name: name.clone(),
+            path: path_str.clone(),
+            size: *size,
+            is_dir: *is_dir,
+            category,
+            modified: *modified,
+            accessed: *accessed,
+            children: vec![],
+            file_count: if *is_dir { 0 } else { 1 },
+            importance_score: importance,
+            is_program: is_prog,
+            program_name: if is_prog { Some(name) } else { None },
+        };
+
+        nodes.insert(path_str.clone(), node);
+
+        if let Some(parent) = path.parent() {
+            let parent_str = parent.to_string_lossy().to_string();
+            if parent_str != path_str {
+                parent_map.insert(path_str, parent_str);
+            }
+        }
     }
 
-    children.sort_by(|a, b| b.size.cmp(&a.size));
+    // Ensure root exists
+    if !nodes.contains_key(&root_key) {
+        let root_name = root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| root_path.to_string());
+        nodes.insert(
+            root_key.clone(),
+            FileNode {
+                name: root_name,
+                path: root_key.clone(),
+                size: 0,
+                is_dir: true,
+                category: FileCategory::Other,
+                modified: None,
+                accessed: None,
+                children: vec![],
+                file_count: 0,
+                importance_score: 0.0,
+                is_program: false,
+                program_name: None,
+            },
+        );
+    }
 
-    // Duplicates (simplified)
-    emit_progress("duplicates", "Suche Duplikate…", total_files_scanned, bytes_scanned.load(Ordering::Relaxed));
+    // Second pass: attach children (bottom-up size aggregation)
+    let mut paths: Vec<String> = nodes.keys().cloned().collect();
+    paths.sort_by(|a, b| b.matches(std::path::MAIN_SEPARATOR).count().cmp(&a.matches(std::path::MAIN_SEPARATOR).count()));
+
+    for path in &paths {
+        if let Some(parent_path) = parent_map.get(path) {
+            if let Some(child_node) = nodes.remove(path) {
+                if let Some(parent) = nodes.get_mut(parent_path) {
+                    parent.size += child_node.size;
+                    parent.file_count += child_node.file_count;
+                    parent.children.push(child_node);
+                } else {
+                    nodes.insert(path.clone(), child_node);
+                }
+            }
+        }
+    }
+
+    // Sort children by size descending everywhere
+    for node in nodes.values_mut() {
+        node.children.sort_by(|a, b| b.size.cmp(&a.size));
+        if node.children.len() > 200 {
+            node.children.truncate(200);
+        }
+    }
+
+    let mut root_node = nodes
+        .remove(&root_key)
+        .ok_or_else(|| "Root-Knoten konnte nicht gebaut werden".to_string())?;
+
+    root_node.size = total_size;
+    root_node.file_count = total_files;
+    root_node.importance_score =
+        calculate_importance(total_size, None, &FileCategory::Other);
+
+    // Largest items
+    let mut largest_items: Vec<FileNode> = Vec::new();
+    fn collect_large(node: &FileNode, out: &mut Vec<FileNode>, depth: usize) {
+        if depth > 3 {
+            return;
+        }
+        for child in &node.children {
+            if child.size > 0 {
+                out.push(child.clone());
+            }
+            if child.is_dir {
+                collect_large(child, out, depth + 1);
+            }
+        }
+    }
+    collect_large(&root_node, &mut largest_items, 0);
+    largest_items.sort_by(|a, b| b.size.cmp(&a.size));
+    largest_items.truncate(50);
+
+    // Installed programs
+    let mut installed_programs: Vec<InstalledProgram> = Vec::new();
+    fn collect_programs(node: &FileNode, out: &mut Vec<InstalledProgram>) {
+        if node.is_program {
+            out.push(InstalledProgram {
+                name: node.program_name.clone().unwrap_or_else(|| node.name.clone()),
+                path: node.path.clone(),
+                size: node.size,
+                file_count: node.file_count,
+            });
+        }
+        for child in &node.children {
+            collect_programs(child, out);
+        }
+    }
+    collect_programs(&root_node, &mut installed_programs);
+    installed_programs.sort_by(|a, b| b.size.cmp(&a.size));
+    installed_programs.truncate(80);
+
+    // Duplicates
+    emit_progress(
+        "duplicates",
+        "Suche Duplikate…",
+        total_files_scanned,
+        bytes_scanned.load(Ordering::Relaxed),
+    );
     let mut size_map: HashMap<u64, Vec<PathBuf>> = HashMap::new();
     for (p, s) in &file_candidates_for_hash {
         size_map.entry(*s).or_default().push(p.clone());
@@ -310,7 +498,10 @@ pub fn scan_directory(
         let mut hash_map: HashMap<String, Vec<String>> = HashMap::new();
         for p in paths {
             if let Some(h) = quick_hash(&p, size) {
-                hash_map.entry(h).or_default().push(p.to_string_lossy().to_string());
+                hash_map
+                    .entry(h)
+                    .or_default()
+                    .push(p.to_string_lossy().to_string());
             }
         }
         for (hash, files) in hash_map {
@@ -325,33 +516,119 @@ pub fn scan_directory(
         }
     }
     duplicates.sort_by(|a, b| b.total_wasted.cmp(&a.total_wasted));
-    duplicates.truncate(50);
+    duplicates.truncate(60);
 
-    let root_name = root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| root_path.to_string());
+    // Recommendations
+    let mut recommendations: Vec<Recommendation> = Vec::new();
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
 
-    let root_node = FileNode {
-        name: root_name,
-        path: root_path.to_string(),
-        size: total_size,
-        is_dir: true,
-        category: FileCategory::Other,
-        modified: None,
-        accessed: None,
-        children,
-        file_count: total_files,
-        importance_score: calculate_importance(total_size, None, &FileCategory::Other),
-        is_program: false,
-        program_name: None,
-    };
+    fn walk_recs(
+        node: &FileNode,
+        now: u64,
+        recs: &mut Vec<Recommendation>,
+        seen: &mut HashSet<String>,
+    ) {
+        let cat = &node.category;
+        let age_days = node
+            .modified
+            .map(|ts| (now.saturating_sub(ts)) as f64 / 86400.0)
+            .unwrap_or(0.0);
 
-    let mut largest_items = root_node.children.clone();
-    largest_items.sort_by(|a, b| b.size.cmp(&a.size));
-    largest_items.truncate(40);
+        if matches!(cat, FileCategory::Temporary) && node.size > 50 * 1024 * 1024 {
+            let key = format!("temp:{}", node.path);
+            if seen.insert(key) {
+                recs.push(Recommendation {
+                    title: format!("Temporäre Dateien: {}", node.name),
+                    description: "Cache- und Temp-Ordner können meist gefahrlos geleert werden."
+                        .into(),
+                    size: node.size,
+                    path: node.path.clone(),
+                    severity: if node.size > 500 * 1024 * 1024 {
+                        "high".into()
+                    } else {
+                        "medium".into()
+                    },
+                    category: "Temporary".into(),
+                });
+            }
+        }
 
-    emit_progress("done", "Fertig", total_files_scanned, bytes_scanned.load(Ordering::Relaxed));
+        if matches!(cat, FileCategory::Downloads)
+            && node.size > 20 * 1024 * 1024
+            && age_days > 90.0
+        {
+            let key = format!("dl:{}", node.path);
+            if seen.insert(key) {
+                recs.push(Recommendation {
+                    title: format!("Alte Downloads: {}", node.name),
+                    description: format!(
+                        "Diese Datei/Ordner ist seit {:.0} Tagen nicht mehr geändert worden.",
+                        age_days
+                    ),
+                    size: node.size,
+                    path: node.path.clone(),
+                    severity: if age_days > 365.0 { "high".into() } else { "medium".into() },
+                    category: "Downloads".into(),
+                });
+            }
+        }
+
+        if matches!(cat, FileCategory::Development)
+            && (node.name == "node_modules"
+                || node.name == "target"
+                || node.name == "dist"
+                || node.name == "build"
+                || node.name == "__pycache__"
+                || node.name == ".next")
+            && node.size > 30 * 1024 * 1024
+        {
+            let key = format!("dev:{}", node.path);
+            if seen.insert(key) {
+                recs.push(Recommendation {
+                    title: format!("Build-Artefakt: {}", node.name),
+                    description: "Kann in der Regel neu generiert werden (npm install / cargo build etc.).".into(),
+                    size: node.size,
+                    path: node.path.clone(),
+                    severity: "medium".into(),
+                    category: "Development".into(),
+                });
+            }
+        }
+
+        if matches!(cat, FileCategory::Archives) && node.size > 100 * 1024 * 1024 && age_days > 180.0
+        {
+            let key = format!("arc:{}", node.path);
+            if seen.insert(key) {
+                recs.push(Recommendation {
+                    title: format!("Altes Archiv: {}", node.name),
+                    description: "Großes Archiv, das seit längerem nicht angefasst wurde.".into(),
+                    size: node.size,
+                    path: node.path.clone(),
+                    severity: "low".into(),
+                    category: "Archives".into(),
+                });
+            }
+        }
+
+        for child in &node.children {
+            walk_recs(child, now, recs, seen);
+        }
+    }
+
+    let mut seen = HashSet::new();
+    walk_recs(&root_node, now, &mut recommendations, &mut seen);
+    recommendations.sort_by(|a, b| b.size.cmp(&a.size));
+    recommendations.truncate(40);
+
+    emit_progress(
+        "done",
+        "Fertig",
+        total_files_scanned,
+        bytes_scanned.load(Ordering::Relaxed),
+    );
 
     Ok(ScanResult {
         root: root_node,
@@ -359,8 +636,8 @@ pub fn scan_directory(
         total_files,
         category_summary,
         largest_items,
-        recommendations: vec![],
+        recommendations,
         duplicates,
-        installed_programs: vec![],
+        installed_programs,
     })
 }
