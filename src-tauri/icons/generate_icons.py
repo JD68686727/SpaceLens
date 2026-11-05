@@ -11,7 +11,11 @@ FILES = {
     "icon.ico": "icon.ico.b64",
 }
 for name, b64name in FILES.items():
-    b64 = (OUT / b64name).read_text().strip()
+    b64_path = OUT / b64name
+    if not b64_path.exists():
+        print(f"Missing {b64name}, skipping {name}")
+        continue
+    b64 = b64_path.read_text().strip()
     (OUT / name).write_bytes(base64.b64decode(b64))
     print("wrote", name)
 print("Icons ready.")
