@@ -8,8 +8,9 @@ SpaceLens zeigt klar und verständlich, **was** auf deinen Laufwerken Platz verb
 
 ### Kern
 - **Sehr schneller Scan** (Rust + walkdir)
-- **Live-Fortschritt** während des Scans (Dateien, Bytes, aktuelle Phase)
-- **Kategorien**: Programme, Dokumente, Bilder, Videos, Audio, Archive, Downloads, Temporär/Cache, System, Entwicklung, Sonstiges
+- **Live-Fortschritt** während des Scans
+- **Vollständiger Verzeichnisbaum** (hierarchisch)
+- **Kategorien**: Programme, Dokumente, Bilder, Videos, Audio, Archive, Downloads, Temporär/Cache, System, Entwicklung, **Spiele**, **Backups**, Sonstiges
 - **Wichtigkeits-Score** (Größe + Alter + Kategorie)
 
 ### Visualisierung
@@ -23,6 +24,12 @@ SpaceLens zeigt klar und verständlich, **was** auf deinen Laufwerken Platz verb
 - **Duplikate finden** (schneller Partial-Hash, Dateien ≥ 1 MB)
 - **Intelligente Empfehlungen** (Caches, alte Downloads, node_modules, Build-Artefakte …)
 - **In Papierkorb verschieben** (sicher, plattformübergreifend)
+
+### Neu
+- **Dark / Light Mode** (Umschalter in der Kopfzeile, wird gespeichert)
+- **Einstellungen speichern** (letzter Scan-Pfad, bevorzugte Ansicht, Theme)
+- **Export als JSON** (Kategorien, größte Dateien, Duplikate, Programme, Empfehlungen)
+- **„Letzter Scan“-Button** für schnellen Neustart
 
 ## Voraussetzungen
 
@@ -39,8 +46,13 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev
 ## Installation & Start
 
 ```bash
-cd space-lens
+git clone https://github.com/JD68686727/SpaceLens.git
+cd SpaceLens
 npm install
+
+# Icons erzeugen (einmalig)
+cd src-tauri/icons && python3 generate_icons.py && cd ../..
+
 npm run tauri dev
 ```
 
