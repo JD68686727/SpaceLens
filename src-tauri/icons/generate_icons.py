@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Generate icons – python3 src-tauri/icons/generate_icons.py"""
+"""Decode icon base64 files into PNG/ICO. Run: python3 generate_icons.py"""
 import base64
 from pathlib import Path
 OUT = Path(__file__).parent
 FILES = {
-  "32x32.png": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgEAIAAACsiDHgAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAJcEhZcwAACxMAAAsTAQCanBgAAAAHdElNRQfqCwUIKQ+YlQJPAAAAfUlEQVRYw+3YMQ7AIAxDUXKyHBluVlYuZegCYpGQl/zZ8nPsTERmp5xzL+eczcwYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8wYY8z8Zw8AAP//AwDfhB1i0xv5ZQAAAABJRU5ErkJggg==",
-  "128x128.png": "iVBORw0KGgoAAAANSUhEUgAAAIAAAACAEAIAAAAczCrfAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAJcEhZcwAACxMAAAsTAQCanBgAAAAHdElNRQfqCwUIKQyqG2YqAAAAjUlEQVR42u3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAODTAAP/AwDfhB1i0xv5ZQAAAABJRU5ErkJggg==",
+    "32x32.png": "32x32.png.b64",
+    "128x128.png": "128x128.png.b64",
+    "128x128@2x.png": "128x128_at_2x.png.b64",
+    "icon.png": "icon.png.b64",
+    "icon.ico": "icon.ico.b64",
 }
-for name, b64 in FILES.items():
+for name, b64name in FILES.items():
+    b64 = (OUT / b64name).read_text().strip()
     (OUT / name).write_bytes(base64.b64decode(b64))
     print("wrote", name)
 print("Icons ready.")
