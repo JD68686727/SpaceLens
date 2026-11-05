@@ -9,6 +9,8 @@ export type FileCategory =
   | "Temporary"
   | "System"
   | "Development"
+  | "Games"
+  | "Backups"
   | "Other";
 
 export interface FileNode {
@@ -78,6 +80,8 @@ export const CATEGORY_LABELS: Record<string, string> = {
   Temporary: "Temporär / Cache",
   System: "System",
   Development: "Entwicklung",
+  Games: "Spiele",
+  Backups: "Backups",
   Other: "Sonstiges",
 };
 
@@ -92,6 +96,8 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Temporary: "bg-red-500",
   System: "bg-slate-500",
   Development: "bg-cyan-500",
+  Games: "bg-emerald-500",
+  Backups: "bg-teal-500",
   Other: "bg-zinc-500",
 };
 
@@ -106,5 +112,7 @@ export const CATEGORY_HEX: Record<string, string> = {
   Temporary: "#ef4444",
   System: "#64748b",
   Development: "#06b6d4",
+  Games: "#10b981",
+  Backups: "#14b8a6",
   Other: "#71717a",
 };

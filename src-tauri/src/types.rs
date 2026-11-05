@@ -13,6 +13,8 @@ pub enum FileCategory {
     Temporary,
     System,
     Development,
+    Games,
+    Backups,
     Other,
 }
 
@@ -29,6 +31,8 @@ impl FileCategory {
             FileCategory::Temporary => "Temporär / Cache",
             FileCategory::System => "System",
             FileCategory::Development => "Entwicklung",
+            FileCategory::Games => "Spiele",
+            FileCategory::Backups => "Backups",
             FileCategory::Other => "Sonstiges",
         }
     }
