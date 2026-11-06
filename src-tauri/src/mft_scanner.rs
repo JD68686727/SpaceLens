@@ -9,7 +9,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
-use ntfs_reader::mft::{FileInfo, Mft};
+// ntfs-reader 0.4.x: FileInfo liegt in file_info, nicht in mft
+use ntfs_reader::file_info::{FileInfo, VecCache};
+use ntfs_reader::mft::Mft;
 use ntfs_reader::volume::Volume;
 
 /// MFT-Scan für ein Laufwerksroot wie `C:\`.
@@ -76,21 +78,37 @@ pub fn scan_via_mft(root_path: &str, app: Option<AppHandle>) -> Result<ScanResul
     let drive_prefix = format!("{}:", drive_letter.to_ascii_uppercase());
     let drive_prefix_lower = drive_prefix.to_lowercase();
 
+    // Pfad-Cache beschleunigt die Auflösung deutlich
+    let mut cache = VecCache::new();
+
     for file in mft.files() {
         if is_scan_cancelled() {
             return Err("SCAN_CANCELLED: Scan wurde abgebrochen".into());
         }
 
-        let info = FileInfo::new(&mft, &file);
-        let path_raw = info.path;
+        let info = FileInfo::with_cache(&mft, &file, &mut cache);
+        // path ist PathBuf in 0.4.x
+        let path_raw = info.path.to_string_lossy().to_string();
         if path_raw.is_empty() {
             continue;
         }
 
         let path_norm = path_raw.replace('/', "\\");
+        // ntfs-reader liefert oft \\.\C:\... – normalisieren
+        let path_norm = path_norm
+            .trim_start_matches(r"\\.\")
+            .to_string();
         let path_lower = path_norm.to_lowercase();
-        if !path_lower.starts_with(&drive_prefix_lower) {
-            continue;
+
+        // Nur dieses Laufwerk (C: oder C:\...)
+        if !path_lower.starts_with(&drive_prefix_lower)
+            && !path_lower.starts_with(&format!("{}\\", drive_prefix_lower))
+        {
+            // z.B. "c:\users\..."
+            let alt = format!("{}\\", drive_letter.to_ascii_lowercase());
+            if !path_lower.starts_with(&alt) && !path_lower.starts_with(&drive_prefix_lower) {
+                continue;
+            }
         }
 
         let is_dir = info.is_directory;
