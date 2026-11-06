@@ -5,8 +5,10 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::SystemTime;
+use tauri::{AppHandle, Emitter};
+use walkdir::WalkDir;
 
-/// Globales Abbruch-Flag für laufende Scans
 static SCAN_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 pub fn request_scan_cancel() {
@@ -20,9 +22,6 @@ fn reset_scan_cancel() {
 fn is_scan_cancelled() -> bool {
     SCAN_CANCELLED.load(Ordering::SeqCst)
 }
-use std::time::SystemTime;
-use tauri::{AppHandle, Emitter};
-use walkdir::WalkDir;
 
 const MIN_TREE_FILE_SIZE: u64 = 256 * 1024;
 const MAX_CHILDREN: usize = 40;
@@ -35,95 +34,201 @@ fn system_time_to_unix(time: SystemTime) -> Option<u64> {
 
 fn categorize(path: &Path, is_dir: bool) -> FileCategory {
     let path_str = path.to_string_lossy().to_lowercase();
-    let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
 
-    if name == "pagefile.sys" || name == "hiberfil.sys" || name == "swapfile.sys"
-        || name == "dumpstack.log" || name.ends_with(".dmp")
+    if name == "pagefile.sys"
+        || name == "hiberfil.sys"
+        || name == "swapfile.sys"
+        || name == "dumpstack.log.tmp"
+        || name == "dumpstack.log"
+        || name.ends_with(".dmp")
+        || name == "system volume information"
+        || name == "$recycle.bin"
+        || name == "$sysreset"
+        || name == "recovery"
+        || name == "config.msi"
     {
         return FileCategory::System;
     }
 
-    if path_str.contains("\\appdata\\local\\temp") || path_str.contains("/appdata/local/temp")
+    if path_str.contains("\\appdata\\local\\temp")
+        || path_str.contains("/appdata/local/temp")
+        || path_str.contains("\\windows\\temp")
+        || path_str.contains("/windows/temp")
         || path_str.contains("\\appdata\\local\\microsoft\\windows\\inetcache")
-        || path_str.contains("/.cache") || path_str.contains("/tmp/") || path_str.contains("\\tmp\\")
-        || path_str.contains("/var/tmp") || path_str.contains("/var/cache")
-        || path_str.contains("\\windows\\temp") || path_str.contains("/windows/temp")
-        || name == "cache" || name == "temp" || name == "tmp" || name.ends_with(".tmp")
-        || name == "thumbs.db" || name == ".ds_store"
-        || path_str.contains("\\pip\\cache") || path_str.contains("/pip/cache")
+        || path_str.contains("\\appdata\\local\\pip\\cache")
+        || path_str.contains("\\appdata\\local\\nuget")
+        || path_str.contains("\\appdata\\local\\yarn")
+        || path_str.contains("\\appdata\\local\\pnpm")
+        || path_str.contains("\\appdata\\local\\npm-cache")
+        || path_str.contains("\\appdata\\local\\crashdumps")
+        || path_str.contains("\\appdata\\local\\gpucache")
+        || path_str.contains("\\appdata\\local\\shadercache")
+        || path_str.contains("\\appdata\\local\\package cache")
+        || path_str.contains("/.cache/")
+        || path_str.contains("\\tmp\\")
+        || path_str.contains("/tmp/")
+        || path_str.contains("/var/tmp")
+        || path_str.contains("/var/cache")
+        || name == "cache"
+        || name == "caches"
+        || name == "temp"
+        || name == "tmp"
+        || name.ends_with(".tmp")
+        || name == "thumbs.db"
+        || name == ".ds_store"
     {
         return FileCategory::Temporary;
     }
 
-    if path_str.contains("/downloads") || path_str.contains("\\downloads") || name == "downloads" {
-        return FileCategory::Downloads;
-    }
-
-    if path_str.contains("\\pictures\\") || path_str.contains("/pictures/") || path_str.contains("\\bilder\\")
-        || name == "pictures" || name == "bilder"
-    {
-        return FileCategory::Images;
-    }
-    if path_str.contains("\\videos\\") || path_str.contains("/videos/") || path_str.contains("\\filme\\")
-        || name == "videos" || name == "filme"
-    {
-        return FileCategory::Videos;
-    }
-    if path_str.contains("\\music\\") || path_str.contains("/music/") || path_str.contains("\\musik\\")
-        || name == "music" || name == "musik"
-    {
-        return FileCategory::Audio;
-    }
-    if path_str.contains("\\documents\\") || path_str.contains("/documents/") || path_str.contains("\\dokumente\\")
-        || path_str.contains("\\onedrive") || path_str.contains("/onedrive")
-        || name == "documents" || name == "dokumente" || name == "desktop"
-    {
-        return FileCategory::Documents;
-    }
-
-    if path_str.contains("/program files") || path_str.contains("\\program files")
-        || path_str.contains("/applications/") || path_str.contains("/appdata/local/programs")
-        || path_str.contains("\\appdata\\local\\programs") || name.ends_with(".app") || name.ends_with(".appimage")
-    {
-        return FileCategory::Programs;
-    }
-
-    if path_str.contains("/windows/") || path_str.contains("\\windows\\")
-        || path_str.contains("/system32") || path_str.contains("\\system32")
-        || path_str.contains("/sys/") || path_str.contains("/boot/") || path_str.contains("\\boot\\")
-        || path_str.contains("\\programdata\\microsoft\\windows")
-        || path_str.contains("\\programdata\\nvidia") || path_str.contains("\\programdata\\amd")
-        || name == "system volume information" || name == "$recycle.bin" || name == "recovery"
-    {
-        return FileCategory::System;
-    }
-
-    if name == "node_modules" || name == ".git" || name == "target" || name == "dist" || name == "build"
-        || name == "__pycache__" || name == ".venv" || name == "venv" || name == ".next" || name == "vendor"
-        || name == ".gradle" || path_str.contains("/.cargo") || path_str.contains("/.npm")
-        || path_str.contains("/.rustup") || path_str.contains("/.nuget") || path_str.contains("/.pnpm-store")
+    if name == "node_modules"
+        || name == ".git"
+        || name == "target"
+        || name == "dist"
+        || name == "build"
+        || name == "out"
+        || name == "__pycache__"
+        || name == ".venv"
+        || name == "venv"
+        || name == ".next"
+        || name == "vendor"
+        || name == ".gradle"
+        || name == ".idea"
+        || name == ".vs"
+        || path_str.contains("\\.cargo\\")
+        || path_str.contains("/.cargo/")
+        || path_str.contains("\\.npm\\")
+        || path_str.contains("\\.rustup\\")
+        || path_str.contains("\\.nuget\\")
+        || path_str.contains("\\.pnpm-store")
+        || path_str.contains("\\.vscode\\extensions")
     {
         return FileCategory::Development;
     }
 
-    if path_str.contains("/steam/steamapps") || path_str.contains("\\steam\\steamapps")
-        || path_str.contains("/epic games") || path_str.contains("\\epic games")
-        || path_str.contains("/gog galaxy") || path_str.contains("\\gog galaxy")
-        || path_str.contains("/xboxgames") || path_str.contains("\\xboxgames")
-        || path_str.contains("\\battle.net") || path_str.contains("\\origin\\")
-        || path_str.contains("\\ubisoft") || path_str.contains("\\riot games")
-        || name == "steamapps" || name == "steam"
+    if path_str.contains("\\docker\\")
+        || path_str.contains("\\wsl\\")
+        || name.ends_with(".vhdx")
+        || name.ends_with(".vhd")
+        || name.ends_with(".vmdk")
+    {
+        if name.ends_with(".vhdx") || name.ends_with(".vhd") || name.ends_with(".vmdk") || name.ends_with(".iso") {
+            return FileCategory::Archives;
+        }
+        return FileCategory::System;
+    }
+
+    if path_str.contains("\\steam\\steamapps")
+        || path_str.contains("\\steamapps\\")
+        || path_str.contains("\\epic games\\")
+        || path_str.contains("\\gog galaxy\\")
+        || path_str.contains("\\xboxgames\\")
+        || path_str.contains("\\battle.net\\")
+        || path_str.contains("\\ubisoft\\")
+        || path_str.contains("\\riot games\\")
+        || name == "steamapps"
+        || name == "steam"
     {
         return FileCategory::Games;
     }
 
-    if name.contains("backup") || name.ends_with(".bak") || name.ends_with(".old")
-        || path_str.contains("/backups") || path_str.contains("\\backups")
+    if path_str.contains("\\program files\\")
+        || path_str.contains("\\program files (x86)\\")
+        || path_str.contains("/program files/")
+        || path_str.contains("\\appdata\\local\\programs\\")
+        || path_str.contains("\\windowsapps\\")
+        || path_str.contains("/applications/")
+        || name.ends_with(".app")
     {
+        return FileCategory::Programs;
+    }
+
+    if path_str.contains("\\nvidia")
+        || path_str.contains("\\programdata\\nvidia")
+        || path_str.contains("\\programdata\\amd")
+        || path_str.contains("\\programdata\\package cache")
+    {
+        if path_str.contains("\\cache") || path_str.contains("\\temp") {
+            return FileCategory::Temporary;
+        }
+        return FileCategory::System;
+    }
+
+    if path_str.contains("\\windows\\")
+        || path_str.contains("/windows/")
+        || path_str.contains("\\system32")
+        || path_str.contains("\\syswow64")
+        || path_str.contains("\\winsxs")
+        || path_str.contains("\\boot\\")
+        || path_str.contains("\\programdata\\microsoft\\windows")
+        || path_str.contains("\\windows.old")
+    {
+        return FileCategory::System;
+    }
+
+    if path_str.contains("\\downloads\\") || path_str.contains("/downloads/") || name == "downloads" {
+        return FileCategory::Downloads;
+    }
+    if path_str.contains("\\pictures\\")
+        || path_str.contains("/pictures/")
+        || name == "pictures"
+        || name == "camera roll"
+        || name == "screenshots"
+    {
+        return FileCategory::Images;
+    }
+    if path_str.contains("\\videos\\") || path_str.contains("/videos/") || name == "videos" || name == "captures"
+    {
+        return FileCategory::Videos;
+    }
+    if path_str.contains("\\music\\") || path_str.contains("/music/") || name == "music" {
+        return FileCategory::Audio;
+    }
+    if path_str.contains("\\documents\\")
+        || path_str.contains("/documents/")
+        || path_str.contains("\\onedrive")
+        || path_str.contains("\\desktop\\")
+        || name == "documents"
+        || name == "desktop"
+        || name == "onedrive"
+    {
+        return FileCategory::Documents;
+    }
+
+    if path_str.contains("\\appdata\\local\\")
+        || path_str.contains("\\appdata\\roaming\\")
+        || path_str.contains("\\appdata\\locallow\\")
+    {
+        if path_str.contains("\\google\\chrome")
+            || path_str.contains("\\microsoft\\edge")
+            || path_str.contains("\\mozilla\\firefox")
+            || path_str.contains("\\discord")
+            || path_str.contains("\\spotify")
+            || path_str.contains("\\telegram")
+        {
+            return FileCategory::Programs;
+        }
+        if path_str.contains("\\unity") || path_str.contains("\\jetbrains") {
+            return FileCategory::Development;
+        }
+        return FileCategory::Programs;
+    }
+
+    if path_str.contains("\\programdata\\") {
+        return FileCategory::System;
+    }
+
+    if name.contains("backup") || name.ends_with(".bak") || path_str.contains("\\backups\\") {
         return FileCategory::Backups;
     }
 
     if is_dir {
+        if name == "users" {
+            return FileCategory::Documents;
+        }
         return FileCategory::Other;
     }
 
@@ -132,17 +237,12 @@ fn categorize(path: &Path, is_dir: bool) -> FileCategory {
         match ext.as_str() {
             "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "svg" | "heic" | "raw" | "tiff" | "ico" | "avif" => FileCategory::Images,
             "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpeg" | "ts" => FileCategory::Videos,
-            "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" | "aiff" | "opus" => FileCategory::Audio,
+            "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" | "opus" => FileCategory::Audio,
             "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "rtf" | "odt" | "md" | "csv" | "epub" => FileCategory::Documents,
-            "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "iso" | "dmg" | "tgz" => FileCategory::Archives,
-            "exe" | "msi" | "app" | "deb" | "rpm" | "appimage" | "pkg" => FileCategory::Programs,
-            "sys" | "dll" => {
-                if path_str.contains("\\windows") || path_str.contains("/windows") {
-                    FileCategory::System
-                } else {
-                    FileCategory::Other
-                }
-            }
+            "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "iso" | "dmg" | "cab" | "wim" => FileCategory::Archives,
+            "exe" | "msi" | "app" | "msix" | "appx" => FileCategory::Programs,
+            "sys" | "dll" | "drv" | "efi" => FileCategory::System,
+            "log" => FileCategory::Temporary,
             _ => FileCategory::Other,
         }
     } else {
@@ -442,34 +542,36 @@ pub fn scan_directory(root_path: &str, app: Option<AppHandle>) -> Result<ScanRes
                 recs.push(Recommendation {
                     title: format!("Temporäre Dateien: {}", node.name),
                     description: "Cache- und Temp-Ordner können meist gefahrlos geleert werden.".into(),
-                    size: node.size, path: node.path.clone(),
-                    severity: if node.size > 500 * 1024 * 1024 { "high".into() } else { "medium".into() },
+                    size: node.size,
+                    path: node.path.clone(),
+                    severity: "high".into(),
                     category: "Temporary".into(),
                 });
             }
         }
-        if matches!(cat, FileCategory::Downloads) && node.size > 20 * 1024 * 1024 && age_days > 90.0 {
-            let key = format!("dl:{}", node.path);
-            if seen.insert(key) {
-                recs.push(Recommendation {
-                    title: format!("Alte Downloads: {}", node.name),
-                    description: format!("Diese Datei/Ordner ist seit {:.0} Tagen nicht mehr geändert worden.", age_days),
-                    size: node.size, path: node.path.clone(),
-                    severity: if age_days > 365.0 { "high".into() } else { "medium".into() },
-                    category: "Downloads".into(),
-                });
-            }
-        }
-        if matches!(cat, FileCategory::Development)
-            && (node.name == "node_modules" || node.name == "target" || node.name == "dist" || node.name == "build" || node.name == "__pycache__")
-            && node.size > 30 * 1024 * 1024
-        {
+        if matches!(cat, FileCategory::Development) && node.size > 80 * 1024 * 1024 {
             let key = format!("dev:{}", node.path);
             if seen.insert(key) {
                 recs.push(Recommendation {
                     title: format!("Build-/Cache-Ordner: {}", node.name),
                     description: "Entwicklungs-Artefakte können oft gelöscht und bei Bedarf neu erzeugt werden.".into(),
-                    size: node.size, path: node.path.clone(), severity: "medium".into(), category: "Development".into(),
+                    size: node.size,
+                    path: node.path.clone(),
+                    severity: "medium".into(),
+                    category: "Development".into(),
+                });
+            }
+        }
+        if matches!(cat, FileCategory::Downloads) && node.size > 30 * 1024 * 1024 && age_days > 90.0 {
+            let key = format!("dl:{}", node.path);
+            if seen.insert(key) {
+                recs.push(Recommendation {
+                    title: format!("Alte Downloads: {}", node.name),
+                    description: format!("Diese Datei/Ordner ist seit {:.0} Tagen nicht mehr geändert worden.", age_days),
+                    size: node.size,
+                    path: node.path.clone(),
+                    severity: "medium".into(),
+                    category: "Downloads".into(),
                 });
             }
         }
@@ -477,7 +579,6 @@ pub fn scan_directory(root_path: &str, app: Option<AppHandle>) -> Result<ScanRes
             walk_recs(child, now, recs, seen, depth + 1);
         }
     }
-
     let mut seen = HashSet::new();
     walk_recs(&root_node, now, &mut recommendations, &mut seen, 0);
     recommendations.sort_by(|a, b| b.size.cmp(&a.size));
