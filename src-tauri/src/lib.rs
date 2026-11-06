@@ -6,7 +6,6 @@ pub use scanner::scan_directory;
 
 use std::path::Path;
 use tauri::AppHandle;
-use types::*;
 
 /// Hilfsfunktion: AppError → JSON-String für Tauri-Fehlerkanal
 fn err_json(e: AppError) -> String {
