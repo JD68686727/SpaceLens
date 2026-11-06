@@ -20,7 +20,13 @@ async fn scan_path(path: String, app: AppHandle) -> Result<ScanResult, String> {
         .await
         .map_err(|e| err_json(AppError::unknown(e)))?
         .map_err(|e| {
-            if e.contains("PATH_NOT_FOUND") || e.contains("existiert nicht") || e.contains("not found") {
+            if e.contains("SCAN_CANCELLED") || e.contains("abgebrochen") {
+                err_json(AppError {
+                    code: "SCAN_CANCELLED".into(),
+                    message: "Scan wurde abgebrochen.".into(),
+                    details: None,
+                })
+            } else if e.contains("PATH_NOT_FOUND") || e.contains("existiert nicht") || e.contains("not found") {
                 err_json(AppError::path_not_found(&path))
             } else if e.contains("NOT_A_DIRECTORY") || e.contains("kein Ordner") {
                 err_json(AppError::not_a_directory(&path))
@@ -30,6 +36,11 @@ async fn scan_path(path: String, app: AppHandle) -> Result<ScanResult, String> {
                 err_json(AppError::scan_failed(e))
             }
         })
+}
+
+#[tauri::command]
+fn cancel_scan() {
+    scanner::request_scan_cancel();
 }
 
 #[tauri::command]
@@ -101,6 +112,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scan_path,
+            cancel_scan,
             get_available_drives,
             move_to_trash
         ])
