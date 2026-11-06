@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import type { FileNode } from "../lib/types";
-import { CATEGORY_HEX } from "../lib/types";
+import { CATEGORY_HEX, CATEGORY_LABELS } from "../lib/types";
 import { formatBytes } from "../lib/format";
 
 interface Rect {
@@ -63,7 +63,7 @@ function squarify(
         rw > 40 &&
         rh > 40
       ) {
-        const kids = node.children.filter((c) => c.size > 0).slice(0, 20);
+        const kids = node.children.filter((c) => c.size > 0).slice(0, 24);
         if (kids.length > 0) {
           result.push(...squarify(kids, rx, ry, rw, rh, depth + 1, maxDepth));
         } else {
@@ -90,6 +90,7 @@ export default function Treemap({ root, onSelect, selectedPath }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 400 });
   const [pathStack, setPathStack] = useState<FileNode[]>([root]);
+  const [hover, setHover] = useState<{ node: FileNode; x: number; y: number } | null>(null);
 
   useEffect(() => {
     setPathStack([root]);
@@ -125,8 +126,16 @@ export default function Treemap({ root, onSelect, selectedPath }: Props) {
     onSelect(node);
   };
 
+  const isHighlighted = (node: FileNode) => {
+    if (!selectedPath) return false;
+    if (selectedPath === node.path) return true;
+    if (selectedPath.startsWith(node.path + "\\") || selectedPath.startsWith(node.path + "/"))
+      return true;
+    return false;
+  };
+
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 relative">
       <div className="flex items-center gap-1 text-[11px] text-slate-400 mb-1 flex-wrap shrink-0">
         {pathStack.map((n, i) => (
           <span key={n.path} className="flex items-center gap-1">
@@ -149,18 +158,32 @@ export default function Treemap({ root, onSelect, selectedPath }: Props) {
         )}
       </div>
 
-      <div ref={containerRef} className="flex-1 min-h-0 w-full">
+      <div
+        ref={containerRef}
+        className="flex-1 min-h-0 w-full relative"
+        onMouseLeave={() => setHover(null)}
+      >
         <svg width={size.w} height={size.h} className="block">
           {rects.map((r) => {
             const color = CATEGORY_HEX[r.node.category] || CATEGORY_HEX.Other;
-            const isSelected = selectedPath === r.node.path;
+            const exact = selectedPath === r.node.path;
+            const related = isHighlighted(r.node);
             const showLabel = r.w > 50 && r.h > 28;
 
             return (
               <g
-                key={`${r.node.path}-${r.depth}-${r.x}-${r.y}`}
+                key={`${r.node.path}-${r.depth}-${Math.round(r.x)}-${Math.round(r.y)}`}
                 className="cursor-pointer"
                 onClick={() => drillDown(r.node)}
+                onMouseMove={(e) => {
+                  const bounds = containerRef.current?.getBoundingClientRect();
+                  if (!bounds) return;
+                  setHover({
+                    node: r.node,
+                    x: e.clientX - bounds.left + 12,
+                    y: e.clientY - bounds.top + 12,
+                  });
+                }}
               >
                 <rect
                   x={r.x}
@@ -168,9 +191,9 @@ export default function Treemap({ root, onSelect, selectedPath }: Props) {
                   width={Math.max(r.w, 0)}
                   height={Math.max(r.h, 0)}
                   fill={color}
-                  opacity={isSelected ? 1 : r.depth === 0 ? 0.9 : 0.75}
-                  stroke={isSelected ? "#fff" : "#1a1a1a"}
-                  strokeWidth={isSelected ? 2 : 1}
+                  opacity={exact ? 1 : related ? 0.95 : r.depth === 0 ? 0.92 : 0.8}
+                  stroke={exact ? "#ffffff" : related ? "#93c5fd" : "#0f0f0f"}
+                  strokeWidth={exact ? 2.5 : related ? 1.5 : 1}
                 />
                 {showLabel && (
                   <>
@@ -181,6 +204,7 @@ export default function Treemap({ root, onSelect, selectedPath }: Props) {
                       fontSize={11}
                       fontWeight={600}
                       className="pointer-events-none"
+                      style={{ textShadow: "0 1px 2px rgba(0,0,0,0.7)" }}
                     >
                       {r.node.name.length > 18
                         ? r.node.name.slice(0, 16) + "…"
@@ -189,21 +213,37 @@ export default function Treemap({ root, onSelect, selectedPath }: Props) {
                     <text
                       x={r.x + 4}
                       y={r.y + 26}
-                      fill="rgba(255,255,255,0.85)"
+                      fill="rgba(255,255,255,0.9)"
                       fontSize={10}
                       className="pointer-events-none"
+                      style={{ textShadow: "0 1px 2px rgba(0,0,0,0.7)" }}
                     >
                       {formatBytes(r.node.size)}
                     </text>
                   </>
                 )}
-                <title>
-                  {r.node.name} — {formatBytes(r.node.size)}
-                </title>
               </g>
             );
           })}
         </svg>
+
+        {hover && (
+          <div
+            className="pointer-events-none absolute z-20 max-w-xs rounded border border-slate-600 bg-[#1e1e1e]/95 px-2.5 py-1.5 text-[11px] shadow-lg"
+            style={{
+              left: Math.min(hover.x, size.w - 220),
+              top: Math.min(hover.y, size.h - 70),
+            }}
+          >
+            <div className="font-medium text-white truncate">{hover.node.name}</div>
+            <div className="text-slate-300 tabular-nums">{formatBytes(hover.node.size)}</div>
+            <div className="text-slate-400 truncate mt-0.5">{hover.node.path}</div>
+            <div className="text-slate-500 mt-0.5">
+              {CATEGORY_LABELS[hover.node.category] || hover.node.category}
+              {hover.node.is_dir ? " · Ordner" : " · Datei"}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
