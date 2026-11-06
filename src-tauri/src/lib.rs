@@ -1,6 +1,9 @@
 mod types;
 mod scanner;
 
+#[cfg(target_os = "windows")]
+mod mft_scanner;
+
 pub use types::*;
 pub use scanner::scan_directory;
 
@@ -11,30 +14,74 @@ fn err_json(e: AppError) -> String {
     e.to_json_string()
 }
 
+fn map_scan_err(path: &str, e: String) -> String {
+    if e.contains("SCAN_CANCELLED") || e.contains("abgebrochen") {
+        err_json(AppError {
+            code: "SCAN_CANCELLED".into(),
+            message: "Scan wurde abgebrochen.".into(),
+            details: None,
+        })
+    } else if e.contains("MFT_ACCESS_DENIED") {
+        err_json(AppError {
+            code: "MFT_ACCESS_DENIED".into(),
+            message: e,
+            details: Some("MFT-Scan benötigt Administrator-Rechte.".into()),
+        })
+    } else if e.contains("MFT_UNSUPPORTED") {
+        err_json(AppError {
+            code: "MFT_UNSUPPORTED".into(),
+            message: e,
+            details: None,
+        })
+    } else if e.contains("MFT_FAILED") {
+        err_json(AppError {
+            code: "MFT_FAILED".into(),
+            message: e,
+            details: None,
+        })
+    } else if e.contains("PATH_NOT_FOUND") || e.contains("existiert nicht") || e.contains("not found") {
+        err_json(AppError::path_not_found(path))
+    } else if e.contains("NOT_A_DIRECTORY") || e.contains("kein Ordner") {
+        err_json(AppError::not_a_directory(path))
+    } else if e.contains("Permission") || e.contains("permission") || e.contains("Access") || e.contains("Zugriff") {
+        err_json(AppError::permission_denied(path))
+    } else {
+        err_json(AppError::scan_failed(e))
+    }
+}
+
+/// `use_mft`: Windows-Schnellscan über NTFS Master File Table (Admin).
+/// Bei Fehler oder wenn nicht Windows → normaler Walk-Scan.
 #[tauri::command]
-async fn scan_path(path: String, app: AppHandle) -> Result<ScanResult, String> {
+async fn scan_path(path: String, use_mft: Option<bool>, app: AppHandle) -> Result<ScanResult, String> {
     let handle = app.clone();
     let path_for_block = path.clone();
-    tauri::async_runtime::spawn_blocking(move || scan_directory(&path_for_block, Some(handle)))
-        .await
-        .map_err(|e| err_json(AppError::unknown(e)))?
-        .map_err(|e| {
-            if e.contains("SCAN_CANCELLED") || e.contains("abgebrochen") {
-                err_json(AppError {
-                    code: "SCAN_CANCELLED".into(),
-                    message: "Scan wurde abgebrochen.".into(),
-                    details: None,
-                })
-            } else if e.contains("PATH_NOT_FOUND") || e.contains("existiert nicht") || e.contains("not found") {
-                err_json(AppError::path_not_found(&path))
-            } else if e.contains("NOT_A_DIRECTORY") || e.contains("kein Ordner") {
-                err_json(AppError::not_a_directory(&path))
-            } else if e.contains("Permission") || e.contains("permission") || e.contains("Access") || e.contains("Zugriff") {
-                err_json(AppError::permission_denied(&path))
-            } else {
-                err_json(AppError::scan_failed(e))
+    let want_mft = use_mft.unwrap_or(false);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        if want_mft {
+            match mft_scanner::scan_via_mft(&path_for_block, Some(handle.clone())) {
+                Ok(r) => return Ok(r),
+                Err(e) => {
+                    // Fallback auf Walk, außer bei Abbruch
+                    if e.contains("SCAN_CANCELLED") {
+                        return Err(e);
+                    }
+                    // MFT fehlgeschlagen → Walk versuchen
+                    eprintln!("[SpaceLens] MFT-Scan fehlgeschlagen, Fallback auf Walk: {e}");
+                }
             }
-        })
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = want_mft;
+
+        scan_directory(&path_for_block, Some(handle))
+    })
+    .await
+    .map_err(|e| err_json(AppError::unknown(e)))?
+    .map_err(|e| map_scan_err(&path, e))
 }
 
 #[tauri::command]
@@ -104,7 +151,6 @@ fn move_to_trash(paths: Vec<String>) -> Result<(), String> {
     }
 }
 
-/// Öffnet den Pfad im System-Explorer (Windows: explorer /select)
 #[tauri::command]
 fn reveal_in_explorer(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -126,7 +172,6 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        // Ordner öffnen (kein universelles Select)
         let p = Path::new(&path);
         let dir = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
         std::process::Command::new("xdg-open")
