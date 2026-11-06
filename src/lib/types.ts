@@ -29,7 +29,6 @@ export interface AppError {
   details?: string | null;
 }
 
-/** Versucht einen Tauri-Fehler (String) als AppError zu parsen. */
 export function parseAppError(raw: unknown): AppError {
   const text = String(raw ?? "");
   const jsonStart = text.indexOf("{");
@@ -125,7 +124,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
 };
 
 export const CATEGORY_COLORS: Record<string, string> = {
-  Programs: "bg-violet-500",
+  Programs: "bg-indigo-500",
   Documents: "bg-blue-500",
   Images: "bg-pink-500",
   Videos: "bg-rose-500",
@@ -140,21 +139,21 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Other: "bg-zinc-500",
 };
 
-/** Muted hex colors for treemap – modern WinDirStat style */
+/** Distinct treemap colors matching category legend */
 export const CATEGORY_HEX: Record<string, string> = {
-  Programs: "#5b6abf",
-  Documents: "#3d7ea6",
-  Images: "#a85a7a",
-  Videos: "#b04a5a",
-  Audio: "#8a5a9a",
-  Archives: "#b08a3a",
-  Downloads: "#b07a40",
-  Temporary: "#b05050",
-  System: "#6a7580",
-  Development: "#3a8a8a",
-  Games: "#3a8a6a",
-  Backups: "#3a8a7a",
-  Other: "#6a6a6a",
+  Programs: "#6366f1",
+  Documents: "#3b82f6",
+  Images: "#ec4899",
+  Videos: "#f43f5e",
+  Audio: "#d946ef",
+  Archives: "#f59e0b",
+  Downloads: "#f97316",
+  Temporary: "#ef4444",
+  System: "#94a3b8",
+  Development: "#06b6d4",
+  Games: "#10b981",
+  Backups: "#14b8a6",
+  Other: "#78716c",
 };
 
 export const ERROR_CODE_LABELS: Record<string, string> = {
