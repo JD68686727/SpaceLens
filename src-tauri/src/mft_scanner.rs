@@ -78,8 +78,7 @@ pub fn scan_via_mft(root_path: &str, app: Option<AppHandle>) -> Result<ScanResul
     let drive_prefix = format!("{}:", drive_letter.to_ascii_uppercase());
     let drive_prefix_lower = drive_prefix.to_lowercase();
 
-    // Pfad-Cache beschleunigt die Auflösung deutlich
-    let mut cache = VecCache::new();
+    let mut cache = VecCache::default();
 
     for file in mft.files() {
         if is_scan_cancelled() {
@@ -87,26 +86,18 @@ pub fn scan_via_mft(root_path: &str, app: Option<AppHandle>) -> Result<ScanResul
         }
 
         let info = FileInfo::with_cache(&mft, &file, &mut cache);
-        // path ist PathBuf in 0.4.x
         let path_raw = info.path.to_string_lossy().to_string();
         if path_raw.is_empty() {
             continue;
         }
 
         let path_norm = path_raw.replace('/', "\\");
-        // ntfs-reader liefert oft \\.\C:\... – normalisieren
-        let path_norm = path_norm
-            .trim_start_matches(r"\\.\")
-            .to_string();
+        let path_norm = path_norm.trim_start_matches(r"\\.\").to_string();
         let path_lower = path_norm.to_lowercase();
 
-        // Nur dieses Laufwerk (C: oder C:\...)
-        if !path_lower.starts_with(&drive_prefix_lower)
-            && !path_lower.starts_with(&format!("{}\\", drive_prefix_lower))
-        {
-            // z.B. "c:\users\..."
+        if !path_lower.starts_with(&drive_prefix_lower) {
             let alt = format!("{}\\", drive_letter.to_ascii_lowercase());
-            if !path_lower.starts_with(&alt) && !path_lower.starts_with(&drive_prefix_lower) {
+            if !path_lower.starts_with(&alt) {
                 continue;
             }
         }
