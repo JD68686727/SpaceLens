@@ -9,6 +9,7 @@ interface Rect {
   w: number;
   h: number;
   node: FileNode;
+  depth: number;
 }
 
 function squarify(
@@ -16,7 +17,9 @@ function squarify(
   x: number,
   y: number,
   w: number,
-  h: number
+  h: number,
+  depth: number,
+  maxDepth: number
 ): Rect[] {
   if (nodes.length === 0 || w <= 0 || h <= 0) return [];
   const total = nodes.reduce((s, n) => s + n.size, 0);
@@ -40,14 +43,35 @@ function squarify(
       if (row.length > 0 && avgW / rowH < 0.4 && row.length >= 2) break;
       row.push(remaining.shift()!);
       rowSize = newRowSize;
-      if (row.length >= 10) break;
+      if (row.length >= 12) break;
     }
 
     const rowH = Math.max((rowSize / total) * h, 3);
     let cx = x;
     for (const node of row) {
       const nw = (node.size / rowSize) * w;
-      result.push({ x: cx, y: cy, w: Math.max(nw, 1), h: rowH, node });
+      const pad = 1;
+      const rx = cx + pad;
+      const ry = cy + pad;
+      const rw = Math.max(nw - pad * 2, 1);
+      const rh = Math.max(rowH - pad * 2, 1);
+
+      if (
+        depth < maxDepth &&
+        node.is_dir &&
+        node.children.length > 0 &&
+        rw > 40 &&
+        rh > 40
+      ) {
+        const kids = node.children.filter((c) => c.size > 0).slice(0, 20);
+        if (kids.length > 0) {
+          result.push(...squarify(kids, rx, ry, rw, rh, depth + 1, maxDepth));
+        } else {
+          result.push({ x: rx, y: ry, w: rw, h: rh, node, depth });
+        }
+      } else {
+        result.push({ x: rx, y: ry, w: rw, h: rh, node, depth });
+      }
       cx += nw;
     }
     cy += rowH;
@@ -58,21 +82,13 @@ function squarify(
 
 interface Props {
   root: FileNode;
-  width?: number;
-  height?: number;
   onSelect: (node: FileNode) => void;
   selectedPath?: string | null;
 }
 
-export default function Treemap({
-  root,
-  width: widthProp,
-  height: heightProp = 400,
-  onSelect,
-  selectedPath,
-}: Props) {
+export default function Treemap({ root, onSelect, selectedPath }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ w: widthProp || 800, h: heightProp });
+  const [size, setSize] = useState({ w: 800, h: 400 });
   const [pathStack, setPathStack] = useState<FileNode[]>([root]);
 
   useEffect(() => {
@@ -99,7 +115,7 @@ export default function Treemap({
       current.children.length > 0
         ? current.children.filter((c) => c.size > 0)
         : [current];
-    return squarify(children, 0, 0, size.w, size.h);
+    return squarify(children, 0, 0, size.w, size.h, 0, 1);
   }, [current, size.w, size.h]);
 
   const drillDown = (node: FileNode) => {
@@ -138,41 +154,41 @@ export default function Treemap({
           {rects.map((r) => {
             const color = CATEGORY_HEX[r.node.category] || CATEGORY_HEX.Other;
             const isSelected = selectedPath === r.node.path;
-            const showLabel = r.w > 56 && r.h > 32;
+            const showLabel = r.w > 50 && r.h > 28;
 
             return (
               <g
-                key={r.node.path}
+                key={`${r.node.path}-${r.depth}-${r.x}-${r.y}`}
                 className="cursor-pointer"
                 onClick={() => drillDown(r.node)}
               >
                 <rect
-                  x={r.x + 0.5}
-                  y={r.y + 0.5}
-                  width={Math.max(r.w - 1, 0)}
-                  height={Math.max(r.h - 1, 0)}
+                  x={r.x}
+                  y={r.y}
+                  width={Math.max(r.w, 0)}
+                  height={Math.max(r.h, 0)}
                   fill={color}
-                  opacity={isSelected ? 1 : 0.88}
+                  opacity={isSelected ? 1 : r.depth === 0 ? 0.9 : 0.75}
                   stroke={isSelected ? "#fff" : "#1a1a1a"}
                   strokeWidth={isSelected ? 2 : 1}
                 />
                 {showLabel && (
                   <>
                     <text
-                      x={r.x + 5}
-                      y={r.y + 15}
+                      x={r.x + 4}
+                      y={r.y + 14}
                       fill="#fff"
                       fontSize={11}
                       fontWeight={600}
                       className="pointer-events-none"
                     >
-                      {r.node.name.length > 20
-                        ? r.node.name.slice(0, 18) + "…"
+                      {r.node.name.length > 18
+                        ? r.node.name.slice(0, 16) + "…"
                         : r.node.name}
                     </text>
                     <text
-                      x={r.x + 5}
-                      y={r.y + 28}
+                      x={r.x + 4}
+                      y={r.y + 26}
                       fill="rgba(255,255,255,0.85)"
                       fontSize={10}
                       className="pointer-events-none"
