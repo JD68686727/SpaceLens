@@ -7,7 +7,6 @@ pub use scanner::scan_directory;
 use std::path::Path;
 use tauri::AppHandle;
 
-/// Hilfsfunktion: AppError → JSON-String für Tauri-Fehlerkanal
 fn err_json(e: AppError) -> String {
     e.to_json_string()
 }
@@ -105,6 +104,41 @@ fn move_to_trash(paths: Vec<String>) -> Result<(), String> {
     }
 }
 
+/// Öffnet den Pfad im System-Explorer (Windows: explorer /select)
+#[tauri::command]
+fn reveal_in_explorer(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let normalized = path.replace('/', "\\");
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{normalized}"))
+            .spawn()
+            .map_err(|e| format!("Explorer konnte nicht gestartet werden: {e}"))?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Ordner öffnen (kein universelles Select)
+        let p = Path::new(&path);
+        let dir = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
+        std::process::Command::new("xdg-open")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Err("Nicht unterstützt".into())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -114,7 +148,8 @@ pub fn run() {
             scan_path,
             cancel_scan,
             get_available_drives,
-            move_to_trash
+            move_to_trash,
+            reveal_in_explorer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
