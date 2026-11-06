@@ -30,6 +30,10 @@ trash = "5"
 blake3 = "1"
 dashmap = "6"
 
+# Windows-only: NTFS Master File Table fast scan
+[target.'cfg(windows)'.dependencies]
+ntfs-reader = "0.4"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
