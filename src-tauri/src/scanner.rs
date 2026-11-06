@@ -9,6 +9,15 @@ use std::time::SystemTime;
 use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 
+/// Mindestgröße, damit eine Datei im Baum landet (kleinere nur in Summen)
+const MIN_TREE_FILE_SIZE: u64 = 256 * 1024; // 256 KB
+/// Max. Kinder pro Ordner im zurückgegebenen Baum
+const MAX_CHILDREN: usize = 40;
+/// Max. Tiefe des zurückgegebenen Baums
+const MAX_TREE_DEPTH: usize = 6;
+/// Max. Hash-Kandidaten für Duplikatsuche
+const MAX_HASH_CANDIDATES: usize = 8_000;
+
 fn system_time_to_unix(time: SystemTime) -> Option<u64> {
     time.duration_since(SystemTime::UNIX_EPOCH)
         .ok()
@@ -132,9 +141,7 @@ fn categorize(path: &Path, is_dir: bool) -> FileCategory {
             "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "iso" | "dmg" | "tgz" => {
                 FileCategory::Archives
             }
-            "exe" | "msi" | "app" | "deb" | "rpm" | "appimage" | "pkg" => {
-                FileCategory::Programs
-            }
+            "exe" | "msi" | "app" | "deb" | "rpm" | "appimage" | "pkg" => FileCategory::Programs,
             _ => FileCategory::Other,
         }
     } else {
@@ -151,10 +158,15 @@ fn calculate_importance(size: u64, modified: Option<u64>, category: &FileCategor
                 .unwrap_or_default()
                 .as_secs();
             let age_days = (now.saturating_sub(ts)) as f64 / 86400.0;
-            if age_days > 365.0 * 2.0 { 1.45 }
-            else if age_days > 365.0 { 1.25 }
-            else if age_days < 14.0 { 0.65 }
-            else { 1.0 }
+            if age_days > 365.0 * 2.0 {
+                1.45
+            } else if age_days > 365.0 {
+                1.25
+            } else if age_days < 14.0 {
+                0.65
+            } else {
+                1.0
+            }
         }
         None => 1.0,
     };
@@ -200,10 +212,13 @@ fn is_program_dir(path: &Path, name: &str) -> bool {
         return true;
     }
     if (path_str.contains("\\program files") || path_str.contains("/program files"))
-        && path.parent().map(|p| {
-            let ps = p.to_string_lossy().to_lowercase();
-            ps.ends_with("program files") || ps.ends_with("program files (x86)")
-        }).unwrap_or(false)
+        && path
+            .parent()
+            .map(|p| {
+                let ps = p.to_string_lossy().to_lowercase();
+                ps.ends_with("program files") || ps.ends_with("program files (x86)")
+            })
+            .unwrap_or(false)
     {
         return true;
     }
@@ -223,6 +238,21 @@ fn is_program_dir(path: &Path, name: &str) -> bool {
         }
     }
     false
+}
+
+/// Kürzt den Baum rekursiv auf MAX_TREE_DEPTH und MAX_CHILDREN.
+fn prune_tree(node: &mut FileNode, depth: usize) {
+    if depth >= MAX_TREE_DEPTH {
+        node.children.clear();
+        return;
+    }
+    node.children.sort_by(|a, b| b.size.cmp(&a.size));
+    if node.children.len() > MAX_CHILDREN {
+        node.children.truncate(MAX_CHILDREN);
+    }
+    for child in &mut node.children {
+        prune_tree(child, depth + 1);
+    }
 }
 
 pub fn scan_directory(
@@ -256,8 +286,12 @@ pub fn scan_directory(
 
     emit_progress("scanning", root_path, 0, 0);
 
+    // Nur Einträge, die in den Baum sollen (Ordner + größere Dateien)
     let mut entries: Vec<(PathBuf, u64, bool, Option<u64>, Option<u64>)> = Vec::new();
     let mut file_candidates_for_hash: Vec<(PathBuf, u64)> = Vec::new();
+    let mut category_summary: HashMap<String, u64> = HashMap::new();
+    let mut total_size = 0u64;
+    let mut total_files = 0u64;
 
     let walker = WalkDir::new(&root)
         .follow_links(false)
@@ -279,7 +313,19 @@ pub fn scan_directory(
         let count = files_scanned.fetch_add(1, Ordering::Relaxed) + 1;
         if !is_dir {
             bytes_scanned.fetch_add(size, Ordering::Relaxed);
-            if size >= 1024 * 1024 && size <= 2 * 1024 * 1024 * 1024 {
+            total_size += size;
+            total_files += 1;
+
+            let category = categorize(&path, false);
+            *category_summary
+                .entry(format!("{:?}", category))
+                .or_insert(0) += size;
+
+            // Hash-Kandidaten begrenzen
+            if size >= 1024 * 1024
+                && size <= 2 * 1024 * 1024 * 1024
+                && file_candidates_for_hash.len() < MAX_HASH_CANDIDATES
+            {
                 file_candidates_for_hash.push((path.clone(), size));
             }
         }
@@ -293,7 +339,10 @@ pub fn scan_directory(
             );
         }
 
-        entries.push((path, size, is_dir, modified, accessed));
+        // Kleine Dateien nicht in den Baum legen → spart massiv Speicher/Serialisierung
+        if is_dir || size >= MIN_TREE_FILE_SIZE {
+            entries.push((path, size, is_dir, modified, accessed));
+        }
     }
 
     let total_files_scanned = files_scanned.load(Ordering::Relaxed);
@@ -306,9 +355,6 @@ pub fn scan_directory(
 
     let mut nodes: HashMap<String, FileNode> = HashMap::new();
     let mut parent_map: HashMap<String, String> = HashMap::new();
-    let mut category_summary: HashMap<String, u64> = HashMap::new();
-    let mut total_size = 0u64;
-    let mut total_files = 0u64;
     let root_key = root.to_string_lossy().to_string();
 
     for (path, size, is_dir, modified, accessed) in &entries {
@@ -321,14 +367,6 @@ pub fn scan_directory(
         let category = categorize(path, *is_dir);
         let importance = calculate_importance(*size, *modified, &category);
         let is_prog = is_program_dir(path, &name);
-
-        if !is_dir {
-            total_size += size;
-            total_files += 1;
-            *category_summary
-                .entry(format!("{:?}", category))
-                .or_insert(0) += size;
-        }
 
         let node = FileNode {
             name: name.clone(),
@@ -379,6 +417,7 @@ pub fn scan_directory(
         );
     }
 
+    // Von den Blättern nach oben aggregieren
     let mut paths: Vec<String> = nodes.keys().cloned().collect();
     paths.sort_by(|a, b| {
         b.matches(std::path::MAIN_SEPARATOR)
@@ -400,30 +439,31 @@ pub fn scan_directory(
         }
     }
 
-    for node in nodes.values_mut() {
-        node.children.sort_by(|a, b| b.size.cmp(&a.size));
-        if node.children.len() > 200 {
-            node.children.truncate(200);
-        }
-    }
-
     let mut root_node = nodes
         .remove(&root_key)
         .ok_or_else(|| "SCAN_FAILED: Root-Knoten konnte nicht gebaut werden".to_string())?;
 
+    // Größen aus dem echten Scan übernehmen (inkl. kleiner Dateien)
     root_node.size = total_size;
     root_node.file_count = total_files;
     root_node.importance_score =
         calculate_importance(total_size, None, &FileCategory::Other);
 
+    // Baum stark kürzen – verhindert Crash bei großen Laufwerken
+    prune_tree(&mut root_node, 0);
+
+    // Größte Elemente (flach, begrenzt)
     let mut largest_items: Vec<FileNode> = Vec::new();
     fn collect_large(node: &FileNode, out: &mut Vec<FileNode>, depth: usize) {
-        if depth > 3 {
+        if depth > 4 || out.len() > 80 {
             return;
         }
         for child in &node.children {
             if child.size > 0 {
-                out.push(child.clone());
+                // Kopie ohne Kinder, damit Serialisierung klein bleibt
+                let mut slim = child.clone();
+                slim.children.clear();
+                out.push(slim);
             }
             if child.is_dir {
                 collect_large(child, out, depth + 1);
@@ -434,21 +474,28 @@ pub fn scan_directory(
     largest_items.sort_by(|a, b| b.size.cmp(&a.size));
     largest_items.truncate(50);
 
+    // Programme
     let mut installed_programs: Vec<InstalledProgram> = Vec::new();
-    fn collect_programs(node: &FileNode, out: &mut Vec<InstalledProgram>) {
+    fn collect_programs(node: &FileNode, out: &mut Vec<InstalledProgram>, depth: usize) {
+        if depth > 8 || out.len() > 100 {
+            return;
+        }
         if node.is_program {
             out.push(InstalledProgram {
-                name: node.program_name.clone().unwrap_or_else(|| node.name.clone()),
+                name: node
+                    .program_name
+                    .clone()
+                    .unwrap_or_else(|| node.name.clone()),
                 path: node.path.clone(),
                 size: node.size,
                 file_count: node.file_count,
             });
         }
         for child in &node.children {
-            collect_programs(child, out);
+            collect_programs(child, out, depth + 1);
         }
     }
-    collect_programs(&root_node, &mut installed_programs);
+    collect_programs(&root_node, &mut installed_programs, 0);
     installed_programs.sort_by(|a, b| b.size.cmp(&a.size));
     installed_programs.truncate(80);
 
@@ -458,6 +505,7 @@ pub fn scan_directory(
         total_files_scanned,
         bytes_scanned.load(Ordering::Relaxed),
     );
+
     let mut size_map: HashMap<u64, Vec<PathBuf>> = HashMap::new();
     for (p, s) in &file_candidates_for_hash {
         size_map.entry(*s).or_default().push(p.clone());
@@ -488,8 +536,9 @@ pub fn scan_directory(
         }
     }
     duplicates.sort_by(|a, b| b.total_wasted.cmp(&a.total_wasted));
-    duplicates.truncate(60);
+    duplicates.truncate(40);
 
+    // Empfehlungen
     let mut recommendations: Vec<Recommendation> = Vec::new();
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -501,7 +550,11 @@ pub fn scan_directory(
         now: u64,
         recs: &mut Vec<Recommendation>,
         seen: &mut HashSet<String>,
+        depth: usize,
     ) {
+        if depth > 8 || recs.len() > 60 {
+            return;
+        }
         let cat = &node.category;
         let age_days = node
             .modified
@@ -563,7 +616,9 @@ pub fn scan_directory(
             if seen.insert(key) {
                 recs.push(Recommendation {
                     title: format!("Build-/Cache-Ordner: {}", node.name),
-                    description: "Entwicklungs-Artefakte können oft gelöscht und bei Bedarf neu erzeugt werden.".into(),
+                    description:
+                        "Entwicklungs-Artefakte können oft gelöscht und bei Bedarf neu erzeugt werden."
+                            .into(),
                     size: node.size,
                     path: node.path.clone(),
                     severity: "medium".into(),
@@ -573,12 +628,12 @@ pub fn scan_directory(
         }
 
         for child in &node.children {
-            walk_recs(child, now, recs, seen);
+            walk_recs(child, now, recs, seen, depth + 1);
         }
     }
 
     let mut seen = HashSet::new();
-    walk_recs(&root_node, now, &mut recommendations, &mut seen);
+    walk_recs(&root_node, now, &mut recommendations, &mut seen, 0);
     recommendations.sort_by(|a, b| b.size.cmp(&a.size));
     recommendations.truncate(40);
 
