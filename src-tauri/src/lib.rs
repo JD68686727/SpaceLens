@@ -8,12 +8,29 @@ use std::path::Path;
 use tauri::AppHandle;
 use types::*;
 
+/// Hilfsfunktion: AppError → JSON-String für Tauri-Fehlerkanal
+fn err_json(e: AppError) -> String {
+    e.to_json_string()
+}
+
 #[tauri::command]
 async fn scan_path(path: String, app: AppHandle) -> Result<ScanResult, String> {
     let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || scan_directory(&path, Some(handle)))
+    let path_for_block = path.clone();
+    tauri::async_runtime::spawn_blocking(move || scan_directory(&path_for_block, Some(handle)))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| err_json(AppError::unknown(e)))?
+        .map_err(|e| {
+            if e.contains("PATH_NOT_FOUND") || e.contains("existiert nicht") || e.contains("not found") {
+                err_json(AppError::path_not_found(&path))
+            } else if e.contains("NOT_A_DIRECTORY") || e.contains("kein Ordner") {
+                err_json(AppError::not_a_directory(&path))
+            } else if e.contains("Permission") || e.contains("permission") || e.contains("Access") || e.contains("Zugriff") {
+                err_json(AppError::permission_denied(&path))
+            } else {
+                err_json(AppError::scan_failed(e))
+            }
+        })
 }
 
 #[tauri::command]
@@ -59,14 +76,22 @@ fn get_available_drives() -> Result<Vec<String>, String> {
 fn move_to_trash(paths: Vec<String>) -> Result<(), String> {
     let mut errors = Vec::new();
     for p in &paths {
-        if let Err(e) = trash::delete(p) {
-            errors.push(format!("{} → {}", p, e));
+        match trash::delete(p) {
+            Ok(()) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.to_lowercase().contains("permission") || msg.to_lowercase().contains("access") {
+                    errors.push(format!("{p} (keine Berechtigung)"));
+                } else {
+                    errors.push(format!("{p} → {msg}"));
+                }
+            }
         }
     }
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("\n"))
+        Err(err_json(AppError::trash_failed(errors.join("\n"))))
     }
 }
 

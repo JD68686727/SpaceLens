@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FileCategory {
@@ -37,6 +38,114 @@ impl FileCategory {
         }
     }
 }
+
+/// Strukturierter Anwendungsfehler mit Code, Nutzer-Text und optionalen Details.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppError {
+    /// Maschinenlesbarer Code, z. B. "PATH_NOT_FOUND"
+    pub code: String,
+    /// Kurze, verständliche Meldung auf Deutsch
+    pub message: String,
+    /// Optionale technische Details (Pfad, Original-Fehler, …)
+    pub details: Option<String>,
+}
+
+impl AppError {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    pub fn with_details(mut self, details: impl Into<String>) -> Self {
+        self.details = Some(details.into());
+        self
+    }
+
+    pub fn path_not_found(path: &str) -> Self {
+        Self::new(
+            "PATH_NOT_FOUND",
+            "Der gewählte Ordner oder das Laufwerk wurde nicht gefunden.",
+        )
+        .with_details(path)
+    }
+
+    pub fn permission_denied(path: &str) -> Self {
+        Self::new(
+            "PERMISSION_DENIED",
+            "Keine Berechtigung zum Lesen dieses Ordners. Starte SpaceLens ggf. mit erweiterten Rechten oder wähle einen anderen Pfad.",
+        )
+        .with_details(path)
+    }
+
+    pub fn not_a_directory(path: &str) -> Self {
+        Self::new(
+            "NOT_A_DIRECTORY",
+            "Der gewählte Pfad ist kein Ordner.",
+        )
+        .with_details(path)
+    }
+
+    pub fn io_error(context: &str, err: impl fmt::Display) -> Self {
+        Self::new(
+            "IO_ERROR",
+            "Fehler beim Zugriff auf die Festplatte. Prüfe, ob das Laufwerk noch verbunden und erreichbar ist.",
+        )
+        .with_details(format!("{context}: {err}"))
+    }
+
+    pub fn scan_failed(err: impl fmt::Display) -> Self {
+        Self::new(
+            "SCAN_FAILED",
+            "Der Scan konnte nicht abgeschlossen werden.",
+        )
+        .with_details(err.to_string())
+    }
+
+    pub fn trash_failed(summary: impl Into<String>) -> Self {
+        Self::new(
+            "TRASH_FAILED",
+            "Mindestens eine Datei konnte nicht in den Papierkorb verschoben werden.",
+        )
+        .with_details(summary)
+    }
+
+    pub fn cancelled() -> Self {
+        Self::new("SCAN_CANCELLED", "Der Scan wurde abgebrochen.")
+    }
+
+    pub fn unknown(err: impl fmt::Display) -> Self {
+        Self::new(
+            "UNKNOWN",
+            "Ein unerwarteter Fehler ist aufgetreten.",
+        )
+        .with_details(err.to_string())
+    }
+
+    /// Als JSON-String für Tauri `Result::Err(String)`.
+    pub fn to_json_string(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| {
+            format!(
+                r#"{{"code":"UNKNOWN","message":"{}","details":null}}"#,
+                self.message.replace('"', "'")
+            )
+        })
+    }
+}
+
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}] {}", self.code, self.message)?;
+        if let Some(ref d) = self.details {
+            write!(f, " ({d})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for AppError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileNode {
