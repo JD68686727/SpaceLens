@@ -132,7 +132,7 @@ fn categorize(path: &Path, is_dir: bool) -> FileCategory {
             "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "iso" | "dmg" | "tgz" => {
                 FileCategory::Archives
             }
-            "exe" | "msi" | "app" | "deb" | "rpm" | "appimage" | "pkg" | "dmg" => {
+            "exe" | "msi" | "app" | "deb" | "rpm" | "appimage" | "pkg" => {
                 FileCategory::Programs
             }
             _ => FileCategory::Other,
@@ -556,38 +556,18 @@ pub fn scan_directory(
                 || node.name == "target"
                 || node.name == "dist"
                 || node.name == "build"
-                || node.name == "__pycache__"
-                || node.name == ".next")
+                || node.name == "__pycache__")
             && node.size > 30 * 1024 * 1024
         {
             let key = format!("dev:{}", node.path);
             if seen.insert(key) {
                 recs.push(Recommendation {
-                    title: format!("Build-Artefakt: {}", node.name),
-                    description:
-                        "Kann in der Regel neu generiert werden (npm install / cargo build etc.)."
-                            .into(),
+                    title: format!("Build-/Cache-Ordner: {}", node.name),
+                    description: "Entwicklungs-Artefakte können oft gelöscht und bei Bedarf neu erzeugt werden.".into(),
                     size: node.size,
                     path: node.path.clone(),
                     severity: "medium".into(),
                     category: "Development".into(),
-                });
-            }
-        }
-
-        if matches!(cat, FileCategory::Archives)
-            && node.size > 100 * 1024 * 1024
-            && age_days > 180.0
-        {
-            let key = format!("arc:{}", node.path);
-            if seen.insert(key) {
-                recs.push(Recommendation {
-                    title: format!("Altes Archiv: {}", node.name),
-                    description: "Großes Archiv, das seit längerem nicht angefasst wurde.".into(),
-                    size: node.size,
-                    path: node.path.clone(),
-                    severity: "low".into(),
-                    category: "Archives".into(),
                 });
             }
         }
