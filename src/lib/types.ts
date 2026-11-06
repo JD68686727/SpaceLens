@@ -140,20 +140,21 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Other: "bg-zinc-500",
 };
 
+/** Muted hex colors for treemap – modern WinDirStat style */
 export const CATEGORY_HEX: Record<string, string> = {
-  Programs: "#8b5cf6",
-  Documents: "#3b82f6",
-  Images: "#ec4899",
-  Videos: "#f43f5e",
-  Audio: "#d946ef",
-  Archives: "#f59e0b",
-  Downloads: "#f97316",
-  Temporary: "#ef4444",
-  System: "#64748b",
-  Development: "#06b6d4",
-  Games: "#10b981",
-  Backups: "#14b8a6",
-  Other: "#71717a",
+  Programs: "#5b6abf",
+  Documents: "#3d7ea6",
+  Images: "#a85a7a",
+  Videos: "#b04a5a",
+  Audio: "#8a5a9a",
+  Archives: "#b08a3a",
+  Downloads: "#b07a40",
+  Temporary: "#b05050",
+  System: "#6a7580",
+  Development: "#3a8a8a",
+  Games: "#3a8a6a",
+  Backups: "#3a8a7a",
+  Other: "#6a6a6a",
 };
 
 export const ERROR_CODE_LABELS: Record<string, string> = {
